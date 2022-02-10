@@ -7,6 +7,7 @@ package myudpserver;
 
 import java.io.*;
 import java.net.*;
+import java.security.Key;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -15,10 +16,24 @@ import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.awt.*;
 import java.awt.TrayIcon.MessageType;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 // import io.github.cdimascio.dotenv.Dotenv;
 // import io.github.cdimascio.dotenv.DotenvException;
+import java.util.Date;
+
+import javax.crypto.spec.SecretKeySpec;
+
+import org.mindrot.jbcrypt.BCrypt;
+
+import io.github.cdimascio.dotenv.Dotenv;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jws;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
 
 
 
@@ -31,6 +46,8 @@ public class UDPServer {
     private DatagramSocket socket;
     private boolean running;
     private Connection DB;
+    private int SALT_ROUNDS;
+    private Key SECRET_KEY;
 
     private byte[] send_buf = new byte[256];
     final String version = "0.1.8";
@@ -65,11 +82,11 @@ public class UDPServer {
             generate_challenge = new Thread(new Challenge());
             generate_challenge.start();
 
-            // Dotenv dotenv = null;
-            // dotenv = new Dotenv.configure().load();
-            // System.out.println(String.format(
-            //     "Hello World. Session is: %s.",
-            //     dotenv.get("SESSION")));
+            Dotenv dotenv = null;
+            dotenv = Dotenv.configure().load();
+            SALT_ROUNDS = Integer.parseInt( dotenv.get("SALT_ROUNDS") );
+
+            SECRET_KEY = Keys.secretKeyFor(SignatureAlgorithm.HS256);
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -1102,13 +1119,14 @@ public class UDPServer {
 
             if (result.next()) {
 
-                if (password.equals(decode64(result.getString("password")))) {
+                if (checkHashedPassword(password, result.getString("password"))) {
 
                     // Return the ID encoded!
                     log("Logged in ID:" + result.getString("id"));
-                    log("Encoded ID:" + encode64(result.getString("id")));
+                    String temp_token = createPlayerToken(result.getString("id"));
+                    log("Encoded ID:" + temp_token);
 
-                    return encode64(result.getString("id"));
+                    return temp_token;
                 } else {
                     log("Wrong password.");
                     return "";
@@ -1132,7 +1150,7 @@ public class UDPServer {
         log("registering on DB...");
         try {
             int result = DB.createStatement().executeUpdate("insert into accounts(username,password,email) values ('"
-                    + name.trim().toLowerCase() + "','" + encode64(password) + "','" + email + "')");
+                    + name.trim().toLowerCase() + "','" + createHashedPassword(password) + "','" + email + "')");
 
             log("Create account result is:" + result);
             if (result != 0)
@@ -1153,7 +1171,7 @@ public class UDPServer {
         try {
 
             ResultSet result = DB.createStatement()
-                    .executeQuery("select name from characters where account='" + decode64(token) + "'");
+                    .executeQuery("select name from characters where account='" + getIdFromToken(token) + "'");
 
             ArrayList<String> list = new ArrayList<String>();
 
@@ -1183,7 +1201,7 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1);
 
             ResultSet result = DB.createStatement()
-                    .executeQuery("select tokens from characters where account='" + decode64(account) + "' and name='"
+                    .executeQuery("select tokens from characters where account='" + getIdFromToken(account) + "' and name='"
                             + character + "'");
 
             if (result.next()) {
@@ -1213,7 +1231,7 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1);
 
             ResultSet result = DB.createStatement()
-                    .executeQuery("select quest , questcounter from characters where account='" + decode64(account)
+                    .executeQuery("select quest , questcounter from characters where account='" + getIdFromToken(account)
                             + "' and name='" + character + "'");
 
             if (result.next()) {
@@ -1243,7 +1261,7 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1);
 
             ResultSet result = DB.createStatement()
-                    .executeQuery("select badges from characters where account='" + decode64(account) + "' and name='"
+                    .executeQuery("select badges from characters where account='" + getIdFromToken(account) + "' and name='"
                             + character + "'");
 
             if (result.next()) {
@@ -1276,7 +1294,7 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select level, health, strength, defense, critical, experience, skillpoints, skillpointsused from characters where account='"+ decode64(account) + "' and name='" + character + "'");
+                            "select level, health, strength, defense, critical, experience, skillpoints, skillpointsused from characters where account='"+ getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result.next()) {
 
@@ -1313,7 +1331,7 @@ public class UDPServer {
             ResultSet result = DB.createStatement()
                     .executeQuery(
                             "select rankpoints, wins, losses from characters where account='"
-                                    + decode64(account) + "' and name='" + character + "'");
+                                    + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result.next()) {
 
@@ -1348,7 +1366,7 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1);
 
             ResultSet result = DB.createStatement()
-                    .executeQuery("select story from characters where account='" + decode64(account) + "' and name='"
+                    .executeQuery("select story from characters where account='" + getIdFromToken(account) + "' and name='"
                             + character + "'");
 
             if (result.next()) {
@@ -1380,7 +1398,7 @@ public class UDPServer {
             ResultSet result = DB.createStatement()
                     .executeQuery(
                             "select hair, face, shirt, pant, sets.name as currentset, firstspecial.name as special1, secondspecial.name as special2, thirdspecial.name as special3, skintone, badge from characters join sets on characters.currentset = sets.id join specials firstspecial on characters.special1 = firstspecial.id join specials secondspecial on characters.special2 = secondspecial.id join specials thirdspecial on characters.special3 = thirdspecial.id where characters.account='"
-                                    + decode64(account) + "' and characters.name='" + character + "'");
+                                    + getIdFromToken(account) + "' and characters.name='" + character + "'");
 
             if (result.next()) {
 
@@ -1416,7 +1434,7 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select achievements from characters where account='" + decode64(account) + "' and name='"
+                            "select achievements from characters where account='" + getIdFromToken(account) + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1448,7 +1466,7 @@ public class UDPServer {
             ResultSet result = DB.createStatement()
                     .executeQuery(
                             "select lifetimetokens, lifetimecounters, lifetimedamage from characters where account='"
-                                    + decode64(account) + "' and name='" + character + "'");
+                                    + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result.next()) {
 
@@ -1489,7 +1507,7 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventoryhair from characters where account='" + decode64(account) + "' and name='"
+                            "select inventoryhair from characters where account='" + getIdFromToken(account) + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1576,7 +1594,7 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventoryface from characters where account='" + decode64(account) + "' and name='"
+                            "select inventoryface from characters where account='" + getIdFromToken(account) + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1667,7 +1685,7 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventoryshirt from characters where account='" + decode64(account) + "' and name='"
+                            "select inventoryshirt from characters where account='" + getIdFromToken(account) + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1757,7 +1775,7 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventorypants from characters where account='" + decode64(account) + "' and name='"
+                            "select inventorypants from characters where account='" + getIdFromToken(account) + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1847,7 +1865,7 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventorysets from characters where account='" + decode64(account) + "' and name='"
+                            "select inventorysets from characters where account='" + getIdFromToken(account) + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1937,7 +1955,7 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventoryspecials from characters where account='" + decode64(account)
+                            "select inventoryspecials from characters where account='" + getIdFromToken(account)
                                     + "' and name='"
                                     + character + "'");
 
@@ -2023,7 +2041,7 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select redeemedcodes from characters where account='" + decode64(account) + "' and name='"
+                            "select redeemedcodes from characters where account='" + getIdFromToken(account) + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -2055,7 +2073,7 @@ public class UDPServer {
             ResultSet result = DB.createStatement()
                     .executeQuery(
                             "select firestones, icestones, spiritstones, bloodstones, lightningstones, darkstones from characters where account='"
-                                    + decode64(account) + "' and name='"
+                                    + getIdFromToken(account) + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -2156,7 +2174,7 @@ public class UDPServer {
             String data = token.substring(token.indexOf(":") + 1);
 
             int result = DB.createStatement().executeUpdate("update characters set achievements='" + data
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             log("Saved Achievements for " + character + " result is " + result);
 
@@ -2181,7 +2199,7 @@ public class UDPServer {
             String data = token.substring(token.indexOf(":") + 1);
 
             int result = DB.createStatement().executeUpdate("update characters set badges='" + data
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             log("Saved Badges for " + character + " result is " + result);
 
@@ -2206,7 +2224,7 @@ public class UDPServer {
             String data = token.substring(token.indexOf(":") + 1);
 
             int result = DB.createStatement().executeUpdate("update characters set tokens='" + data
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             log("Saved Tokens for " + character + " result is " + result);
 
@@ -2235,7 +2253,7 @@ public class UDPServer {
 
             int result = DB.createStatement()
                     .executeUpdate("update characters set quest='" + quest + "', questcounter='" + questCounter
-                            + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                            + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             log("Saved Quest for " + character + " result is " + result);
 
@@ -2268,7 +2286,7 @@ public class UDPServer {
             int result = DB.createStatement()
                     .executeUpdate("update characters set lifetimetokens='" + lifetimeTokens + "', lifetimecounters='"
                             + lifetimeCounters + "', lifetimedamage='" + lifetimeDamage + "' where account='"
-                            + decode64(account) + "' and name='" + character + "'");
+                            + getIdFromToken(account) + "' and name='" + character + "'");
 
             log("Saved Lifetimes for " + character + " result is " + result);
 
@@ -2300,7 +2318,7 @@ public class UDPServer {
 
             int result = DB.createStatement()
                     .executeUpdate("update characters set wins='" + wins + "', losses='" + losses + "', rankpoints='"
-                            + rankpoints + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                            + rankpoints + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             log("Saved RP for " + character + " result is " + result);
 
@@ -2375,7 +2393,7 @@ public class UDPServer {
                             + "', shirt='" + data.get(2) + "', pant='" + data.get(3) + "', currentset='" + currentset_id
                             + "', special1='" + special1_id + "', special2='" + special2_id + "', special3='"
                             + special3_id + "', skintone='" + data.get(8) + "', badge='" + data.get(9)
-                            + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                            + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             log("Saved equip for character " + character + " is " + result);
 
@@ -2402,7 +2420,7 @@ public class UDPServer {
             log("Saving hair list " + list);
 
             int result = DB.createStatement().executeUpdate("update characters set inventoryhair='" + list
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result == 1) {
                 return "success";
@@ -2426,7 +2444,7 @@ public class UDPServer {
             log("Saving face list " + list);
 
             int result = DB.createStatement().executeUpdate("update characters set inventoryface='" + list
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result == 1) {
                 return "success";
@@ -2448,7 +2466,7 @@ public class UDPServer {
             String list = token.substring(token.indexOf(":") + 1);
 
             int result = DB.createStatement().executeUpdate("update characters set inventoryshirt='" + list
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result == 1) {
                 return "success";
@@ -2470,7 +2488,7 @@ public class UDPServer {
             String list = token.substring(token.indexOf(":") + 1);
 
             int result = DB.createStatement().executeUpdate("update characters set inventorypants='" + list
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result == 1) {
                 return "success";
@@ -2536,7 +2554,7 @@ public class UDPServer {
             log("List of sets to save is " + setIdList);
 
             int result = DB.createStatement().executeUpdate("update characters set inventorysets='" + setIdList
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result == 1) {
                 return "success";
@@ -2602,7 +2620,7 @@ public class UDPServer {
             log("List of specials to save is " + specialIdList);
 
             int result = DB.createStatement().executeUpdate("update characters set inventoryspecials='" + specialIdList
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result == 1) {
                 return "success";
@@ -2642,7 +2660,7 @@ public class UDPServer {
             log("Saving redeemed codes list " + list);
 
             int result = DB.createStatement().executeUpdate("update characters set redeemedcodes='" + list
-                    + "' where account='" + decode64(account) + "' and name='" + character + "'");
+                    + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result == 1) {
                 return "success";
@@ -2692,7 +2710,7 @@ public class UDPServer {
                     .executeUpdate("update characters set level='" + data.get(0) + "', health='" + data.get(1)
                             + "', strength='" + data.get(2) + "', defense='" + data.get(3) + "', critical='"
                             + data.get(4) + "', experience='" + data.get(5) + "', skillpoints='" + data.get(6)
-                            + "', skillpointsused='" + data.get(7) + "' where account='" + decode64(account)
+                            + "', skillpointsused='" + data.get(7) + "' where account='" + getIdFromToken(account)
                             + "' and name='" + character + "'");
 
             log("Saved stats for character " + character + " is " + result);
@@ -2745,7 +2763,7 @@ public class UDPServer {
                 throw new Exception("Stone list is empty");
             }
 
-            int result = DB.createStatement().executeUpdate("update characters set firestones='"+data.get(0)+"', icestones='"+data.get(1)+"', spiritstones='"+data.get(2)+"', lightningstones='"+data.get(3)+"', bloodstones='"+data.get(4)+", darkstones='"+data.get(5)+"' where account='"+decode64(account)+"' and name='"+character+"'");
+            int result = DB.createStatement().executeUpdate("update characters set firestones='"+data.get(0)+"', icestones='"+data.get(1)+"', spiritstones='"+data.get(2)+"', lightningstones='"+data.get(3)+"', bloodstones='"+data.get(4)+", darkstones='"+data.get(5)+"' where account='"+getIdFromToken(account)+"' and name='"+character+"'");
 
             if(result == 1){
                 return "success";
@@ -2767,7 +2785,7 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1, token.indexOf(":"));
             String list = token.substring(token.indexOf(":") + 1);
 
-            int result = DB.createStatement().executeUpdate("update characters set story='"+list+"' where account='"+decode64(account)+"' and name='"+character+"'");
+            int result = DB.createStatement().executeUpdate("update characters set story='"+list+"' where account='"+getIdFromToken(account)+"' and name='"+character+"'");
 
             if(result == 1){
                 return "success";
@@ -2838,7 +2856,7 @@ public class UDPServer {
             String account = token.substring(0, token.indexOf(" "));
             String character = token.substring(token.indexOf(" ") + 1);
 
-            int result = DB.createStatement().executeUpdate("insert into characters(name,account) values('"+character+"','"+decode64(account)+"')");
+            int result = DB.createStatement().executeUpdate("insert into characters(name,account) values('"+character+"','"+getIdFromToken(account)+"')");
 
             if(result == 1){
                 return "success";
@@ -3019,27 +3037,79 @@ public class UDPServer {
         trayIcon.displayMessage("Geo Fighter Server", message$, MessageType.INFO);
     }
 
-    public String encode64(String str) {
+    private String createHashedPassword(String password){
 
-        // log("Starting Encoding on " + str);
-        for (int i = 0; i < 3; i++) {
-            // log("Encoding: " + str);
-            str = Base64.getEncoder().encodeToString(str.getBytes());
-        }
+        String hashed = BCrypt.hashpw(password, BCrypt.gensalt(SALT_ROUNDS));
 
-        // log("Final encode: " + str);
-        return str;
+        return hashed;
     }
 
-    public String decode64(String str) {
+    private Boolean checkHashedPassword(String plainPassword, String hashedPassword){
 
-        // log("Starting Decoding on " + str);
-        for (int i = 0; i < 3; i++) {
-            // log("Decoding: " + str);
-            str = new String(Base64.getDecoder().decode(str));
+        if(BCrypt.checkpw(plainPassword, hashedPassword)){
+            return true;
+        }else{
+            return false;
+        }
+    }
+
+    private String createPlayerToken(String id){
+
+        try {
+            return Jwts.builder()
+            .claim("id",id)
+            .setIssuedAt(Date.from(Instant.now()))
+            .setExpiration(Date.from(Instant.now().plus(1, ChronoUnit.DAYS)))
+            .signWith(SECRET_KEY)
+            .compact();
+        }catch(Exception e){
+            e.printStackTrace();
+            return "";
         }
 
-        // log("Final decode: " + str);
-        return str;
     }
+
+    private String getIdFromToken(String jwtToken) {
+
+        try {
+
+            Jws<Claims> jwt = Jwts.parserBuilder()
+                .setSigningKey(SECRET_KEY)
+                .build()
+                .parseClaimsJws(jwtToken);
+
+        String id = (String) jwt.getBody().get("id");
+        return id;
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return "0";
+
+    }
+
+    // public String encode64(String str) {
+
+    //     // log("Starting Encoding on " + str);
+    //     for (int i = 0; i < 3; i++) {
+    //         // log("Encoding: " + str);
+    //         str = Base64.getEncoder().encodeToString(str.getBytes());
+    //     }
+
+    //     // log("Final encode: " + str);
+    //     return str;
+    // }
+
+    // public String decode64(String str) {
+
+    //     // log("Starting Decoding on " + str);
+    //     for (int i = 0; i < 3; i++) {
+    //         // log("Decoding: " + str);
+    //         str = new String(Base64.getDecoder().decode(str));
+    //     }
+
+    //     // log("Final decode: " + str);
+    //     return str;
+    // }
 }
