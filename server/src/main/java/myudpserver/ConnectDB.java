@@ -20,6 +20,7 @@ public class ConnectDB {
 
     } catch (Exception e) {
       System.out.println(e);
+      System.exit(0);;
     }
 
     return databaseConnection;

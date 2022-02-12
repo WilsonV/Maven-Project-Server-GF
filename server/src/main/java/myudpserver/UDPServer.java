@@ -49,7 +49,7 @@ public class UDPServer {
     private int SALT_ROUNDS;
     private Key SECRET_KEY;
 
-    private byte[] send_buf = new byte[256];
+    private byte[] send_buf = new byte[2048];
     final String version = "0.1.8";
     final String updateLink = "https://gamejolt.com/games/geofighter/436528";
     final String discordLink = "https://discord.gg/DKrk3fD";
@@ -73,6 +73,8 @@ public class UDPServer {
         try {
 
             DB = new ConnectDB().getConnection();
+            if(DB == null)log("DB is null!");
+
             socket = new DatagramSocket(server_port);
             print("Server Created on port " + server_port + " [version " + version + "]");
             // notification("Geo Fighter Server Started!");
@@ -2873,7 +2875,7 @@ public class UDPServer {
     private void sendMessage(String s, InetAddress address, int port) {
 
         try {
-            send_buf = new byte[256];
+            send_buf = new byte[2048];
             send_buf = s.getBytes();
             DatagramPacket packet = new DatagramPacket(send_buf, send_buf.length, address, port);
             socket.send(packet);
@@ -2885,7 +2887,6 @@ public class UDPServer {
 
     private void passChatToAllPlayers(String s, Player sender) {
         // print("message to send to all: " + s);
-        // send_buf = new byte[256];
         send_buf = s.getBytes();
 
         // If it's from a player, don't message that player, otherwise send it to all
