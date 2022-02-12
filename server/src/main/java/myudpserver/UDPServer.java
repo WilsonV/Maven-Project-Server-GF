@@ -1000,7 +1000,7 @@ public class UDPServer {
             log(address + " requested a file! [" + value + "]");
             Thread ftran = new Thread(new FileSender(avail_port++, value));
             ftran.start();
-
+            log("file sending thread started.");
             return;
         }
 

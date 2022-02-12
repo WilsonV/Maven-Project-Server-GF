@@ -35,7 +35,7 @@ public class FileSender implements Runnable{
         }
     }
     public void run(){
-        //System.out.println("FS: Waiting for something...");
+        System.out.println("FS: Started Thread");
         InputStream fis = null;
         byte[] buffer = new byte[100];
         File file_to_send = new File(file_location);
@@ -57,7 +57,7 @@ public class FileSender implements Runnable{
                     e.printStackTrace();
                 }
 
-                //System.out.println("File SIZE IS:" +file_to_send.length() );
+                System.out.println("File SIZE IS:" +file_to_send.length() );
                 //buffer = ("sze"+file_to_send.length()).getBytes();
 
 
@@ -87,6 +87,6 @@ public class FileSender implements Runnable{
             e.printStackTrace();
         }
 
-        //System.out.println("FS: Alright I sent the file...");
+        System.out.println("FS: Alright I sent the file...");
     }
 }
