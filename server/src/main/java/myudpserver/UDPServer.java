@@ -11,7 +11,7 @@ import java.security.Key;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
+//import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.awt.*;
@@ -19,12 +19,12 @@ import java.awt.TrayIcon.MessageType;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
+//import java.util.Base64;
 // import io.github.cdimascio.dotenv.Dotenv;
 // import io.github.cdimascio.dotenv.DotenvException;
 import java.util.Date;
 
-import javax.crypto.spec.SecretKeySpec;
+//import javax.crypto.spec.SecretKeySpec;
 
 import org.mindrot.jbcrypt.BCrypt;
 
@@ -34,8 +34,6 @@ import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
-
-
 
 /**
  *
@@ -51,8 +49,8 @@ public class UDPServer {
 
     private byte[] send_buf = new byte[2048];
     final String version = "0.1.8";
-    final String updateLink = "https://gamejolt.com/games/geofighter/436528";
-    final String discordLink = "https://discord.gg/DKrk3fD";
+    // final String updateLink = "https://gamejolt.com/games/geofighter/436528";
+    final String discordLink = "https://discord.gg";
     private ArrayList<Player> players = new ArrayList<Player>();
     private ArrayList<Game> games = new ArrayList<Game>();
     private ArrayList<Code> codes = new ArrayList<Code>();
@@ -73,7 +71,10 @@ public class UDPServer {
         try {
 
             DB = new ConnectDB().getConnection();
-            if(DB == null)log("DB is null!");
+            if (DB == null) {
+                log("DB is null!");
+                throw new Error("Could not connect to database");
+            }
 
             socket = new DatagramSocket(server_port);
             print("Server Created on port " + server_port + " [version " + version + "]");
@@ -86,7 +87,7 @@ public class UDPServer {
 
             Dotenv dotenv = null;
             dotenv = Dotenv.configure().load();
-            SALT_ROUNDS = Integer.parseInt( dotenv.get("SALT_ROUNDS") );
+            SALT_ROUNDS = Integer.parseInt(dotenv.get("SALT_ROUNDS"));
 
             SECRET_KEY = Keys.secretKeyFor(SignatureAlgorithm.HS256);
 
@@ -110,7 +111,7 @@ public class UDPServer {
                 // print("waiting...");
                 DatagramPacket packet = new DatagramPacket(buf, buf.length);
 
-                socket.setSoTimeout(1000);
+                // socket.setSoTimeout(1000);
 
                 try {
                     socket.receive(packet);
@@ -126,6 +127,7 @@ public class UDPServer {
                     log(">> " + received);
                     processData(received, address, port);
                 } catch (SocketTimeoutException e) {
+                    System.out.println(e);
                     // System.out.println("Stopped listening");
                 }
 
@@ -138,8 +140,23 @@ public class UDPServer {
     }
 
     private void processData(String msg, InetAddress address, int port) throws AWTException {
+        boolean banned = false;
+        for (BannedIP b : banned_ips) {
 
-        String command = "", cmdArgs = "";
+            if (b.ip.equals(address)) {
+
+                banned = true;
+                log("Message From Banned IP Recieved. [" + address + "]");
+                // Say nothing back
+                // sendMessage("banned",address,port);
+                break;
+            }
+
+        }
+        if (banned)
+            return;
+
+        String command = "", cmdArgs = "", value;
         log("processing: " + msg);
 
         if (msg.contains(" ")) {
@@ -148,25 +165,6 @@ public class UDPServer {
             cmdArgs = msg.substring(msg.indexOf(" ") + 1);
         }
 
-        String value;
-
-        // check if it is from a banned IP
-        boolean banned = false;
-        for (BannedIP b : banned_ips) {
-
-            if (b.ip.equals(address)) {
-
-                banned = true;
-                log("Message From Banned IP Recieved. [" + address + "]");
-                // Say nothing
-                // sendMessage("banned",address,port);
-                break;
-            }
-
-        }
-
-        if (banned)
-            return;
         /** NO COMMANDS BEFORE BAN CHECK */
         /** NO COMMANDS BEFORE BAN CHECK */
         /** NO COMMANDS BEFORE BAN CHECK */
@@ -180,7 +178,7 @@ public class UDPServer {
         }
 
         // online player list
-        if (msg.equals("onlinelist")) {
+        if (command.equals("onlinelist")) {
 
             String playerList = "";
             for (Player i : players) {
@@ -202,7 +200,6 @@ public class UDPServer {
             if (value.equals(version)) {
                 sendMessage("goodvrs", address, port);
             } else {
-                sendMessage("udl" + updateLink, address, port);
                 sendMessage("oud" + version, address, port);
             }
 
@@ -210,7 +207,7 @@ public class UDPServer {
         }
 
         // Chat Message
-        if (msg.startsWith("msg")) {
+        if (command.equals("msg")) {
 
             String sender_name = "";
             Player sender = null;
@@ -224,9 +221,13 @@ public class UDPServer {
                     break;
                 }
             }
-
-            passChatToAllPlayers("msg" + sender_name + ": " + msg.substring(3), sender);
-            print(sender_name + ": " + msg.substring(3));
+            // Do not pass along if sender isnt found
+            if (sender == null || sender_name == null) {
+                print("Message From Unfound Player: " + cmdArgs);
+                return;
+            }
+            passChatToAllPlayers("msg" + sender_name + ": " + cmdArgs, sender);
+            print(sender_name + ": " + cmdArgs);
             return;
         }
 
@@ -236,7 +237,6 @@ public class UDPServer {
             String password = cmdArgs.substring(cmdArgs.indexOf("!") + 1);
 
             sendMessage(loginAccount(name, password), address, port);
-
             return;
         }
 
@@ -257,166 +257,135 @@ public class UDPServer {
 
         // Get players tokens on
         if (command.equals("loadtokens")) {
-
             sendMessage(getCharacterTokens(cmdArgs), address, port);
-
             return;
         }
 
         // Get player quest
         if (command.equals("loadquest")) {
-
             sendMessage(getCharacterQuest(cmdArgs), address, port);
-
             return;
         }
 
         // Get player badges
         if (command.equals("loadbadges")) {
-
             sendMessage(getCharacterBadges(cmdArgs), address, port);
-
             return;
         }
 
         // Get player stats
         if (command.equals("loadstats")) {
-
             sendMessage(getCharacterStats(cmdArgs), address, port);
-
             return;
         }
 
         // Get RP stats
         if (command.equals("loadrp")) {
-
             sendMessage(getCharacterRankStats(cmdArgs), address, port);
-
             return;
         }
 
         if (command.equals("loadstorytrack")) {
-
             sendMessage(getCharacterStory(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadequip")) {
-
             sendMessage(getCharacterEquip(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadachievements")) {
-
             sendMessage(getCharacterAchievements(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadlifetimes")) {
-
             sendMessage(getCharacterLifeTimes(cmdArgs), address, port);
             return;
         }
 
         if (msg.equals("loadchallenge")) {
-
             sendMessage(getChallenge(), address, port);
             return;
         }
 
         if (command.equals("loadstory")) {
-
             sendMessage(getStory(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadinventoryhairs")) {
-
             sendMessage(getCharacterInventoryHairs(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadinventoryfaces")) {
-
             sendMessage(getCharacterInventoryFaces(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadinventoryshirts")) {
-
             sendMessage(getCharacterInventoryShirts(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadinventorypants")) {
-
             sendMessage(getCharacterInventoryPants(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadinventorysets")) {
-
             sendMessage(getCharacterInventorySets(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadinventoryspecials")) {
-
             sendMessage(getCharacterInventorySpecials(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadredeemedcodes")) {
-
             sendMessage(getCharacterRedeemedCodes(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("loadstones")) {
-
             sendMessage(getCharacterStones(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("saveachievements")) {
-
             sendMessage(saveCharacterAchievements(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("savebadges")) {
-
             sendMessage(saveCharacterBadges(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("savetokens")) {
-
             sendMessage(saveCharacterTokens(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("savequests")) {
-
             sendMessage(saveCharacterQuests(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("savelifetimes")) {
-
             sendMessage(saveCharacterLifeTimes(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("saverp")) {
-
             sendMessage(saveCharacterRP(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("saveequip")) {
-
             sendMessage(saveCharacterEquip(cmdArgs), address, port);
             return;
         }
@@ -462,19 +431,17 @@ public class UDPServer {
         }
 
         if (command.equals("savestones")) {
-
             sendMessage(saveCharacterStones(cmdArgs), address, port);
             return;
         }
 
         if (command.equals("savestorytrack")) {
-
             sendMessage(saveCharacterStoryTracker(cmdArgs), address, port);
             return;
         }
 
         // Player Logged Out
-        if (msg.startsWith("plo")) {
+        if (command.equals("plo")) {
             value = msg.substring(3);
 
             sendMessageFromServer("rpl" + value);
@@ -484,57 +451,29 @@ public class UDPServer {
             return;
         }
 
-        // Player making a new game (one was not found)
-        /*
-         * if(msg.substring(0,3).equals("str")){
-         *
-         *
-         * sendMessage("prt"+avail_port,address,port);
-         *
-         * value = msg.substring(3);
-         * Game new_game = new Game(this,value+"' Story Game",avail_port++,"Story");
-         * games.add(new_game);
-         * Thread new_story_game = new Thread(new_game);
-         * new_story_game.start();
-         *
-         * //removePlayer(address,port);
-         * passChatToAllPlayers("msg*"+value+"* has left to face a boss!",null);
-         *
-         * print("*"+msg.substring(3)+"* has left to face a boss!");
-         *
-         * return;
-         * }
-         */
-
         // In Game [Port]
-        if (msg.startsWith("ing")) {
-
-            value = msg.substring(3);
+        if (command.equals("ing")) {
 
             for (Player i : players) {
-
                 if (i.address.equals(address) && i.port == port) {
 
-                    i.inGame = Integer.parseInt(value);
-                    print(i.name + " is in game: " + value);
+                    i.inGame = Integer.parseInt(cmdArgs);
+                    print(i.name + " is in game: " + cmdArgs);
                     break;
                 }
             }
-
             return;
         }
 
         // Status of the player
-        if (msg.startsWith("sta")) {
-
-            value = msg.substring(3);
+        if (command.equals("sta")) {
 
             for (Player i : players) {
 
                 if (i.address.equals(address) && i.port == port) {
 
-                    i.status = value;
-                    log(i.name + "'s status is: " + value);
+                    i.status = cmdArgs;
+                    log(i.name + "'s status is: " + cmdArgs);
 
                     // Check If Player Was Already in a game prior
                     if (!(i.inGame == 0) && i.status.equals("menu")) {
@@ -570,20 +509,18 @@ public class UDPServer {
             return;
         }
 
-        if (msg.startsWith("hst")) {
-
-            value = msg.substring(3);
+        if (command.equals("hst")) {
 
             for (Player i : players) {
 
                 if (i.address.equals(address) && i.port == port) {
 
-                    if (value.equals("yes"))
+                    if (cmdArgs.equals("yes"))
                         i.isHost = true;
                     else
                         i.isHost = false;
 
-                    log(i.name + " is host?: " + value);
+                    log(i.name + " is host?: " + cmdArgs);
                     break;
                 }
             }
@@ -592,9 +529,9 @@ public class UDPServer {
         }
 
         // rp to lose
-        if (msg.startsWith("rtl")) {
+        if (command.equals("rtl")) {
 
-            String RPtoLose = msg.substring(3);
+            String RPtoLose = cmdArgs;
 
             // Which player was this from...
             for (Player i : players) {
@@ -609,9 +546,9 @@ public class UDPServer {
         }
 
         // rp to earn
-        if (msg.startsWith("rte")) {
+        if (command.equals("rte")) {
 
-            String RPtoEarn = msg.substring(3);
+            String RPtoEarn = cmdArgs;
 
             // Which player was this from...
             for (Player i : players) {
@@ -625,9 +562,9 @@ public class UDPServer {
             return;
         }
 
-        if (msg.startsWith("stg")) {
+        if (command.equals("stg")) {
 
-            String stageNumber = msg.substring(3);
+            String stageNumber = cmdArgs;
 
             // Which player was this from...
             for (Player i : players) {
@@ -642,9 +579,9 @@ public class UDPServer {
         }
 
         // On team
-        if (msg.startsWith("team")) {
+        if (command.equals("team")) {
 
-            String onTeam = msg.substring(4);
+            String onTeam = cmdArgs;
 
             // Which player was this from...
             for (Player i : players) {
@@ -659,12 +596,11 @@ public class UDPServer {
         }
 
         // Player making a new game (one was note found)
-        if (msg.startsWith("pvp")) {
+        if (command.equals("pvp")) {
 
             sendMessage("prt" + avail_port, address, port);
 
-            value = msg.substring(3);
-            Game new_game = new Game(this, value + "' PvP Game", avail_port++, "PvP");
+            Game new_game = new Game(this, cmdArgs + "' PvP Game", avail_port++, "PvP");
             games.add(new_game);
             Thread new_pvp_game = new Thread(new_game);
             new_pvp_game.start();
@@ -675,9 +611,8 @@ public class UDPServer {
         }
 
         // player is requesting a practice match
-        if (msg.startsWith("rpm")) {
+        if (command.equals("rpm")) {
 
-            value = msg.substring(3);
             String challenger = "";
 
             for (Player i : players) {
@@ -690,15 +625,15 @@ public class UDPServer {
             }
 
             if (!challenger.equals("")) {
-                log(challenger + " issued a challenge to " + value);
+                log(challenger + " issued a challenge to " + cmdArgs);
                 for (Player i : players) {
 
-                    if (i.name.equals(value)) {
+                    if (i.name.equals(cmdArgs)) {
                         if (i.status.equals("menu")) {
                             send_buf = ("apm" + challenger).getBytes();
                             i.message(socket, send_buf);
                         } else {
-                            sendMessage("xpm" + value, address, port);
+                            sendMessage("xpm" + cmdArgs, address, port);
                         }
                         break;
                     }
@@ -708,9 +643,7 @@ public class UDPServer {
             return;
         }
 
-        if (msg.startsWith("npm")) {
-
-            value = msg.substring(3);
+        if (command.equals("npm")) {
 
             String challengee = "";
 
@@ -723,10 +656,10 @@ public class UDPServer {
             }
 
             if (!challengee.equals("")) {
-                log(challengee + " declined the challenge from " + value);
+                log(challengee + " declined the challenge from " + cmdArgs);
                 for (Player i : players) {
 
-                    if (i.name.equals(value)) {
+                    if (i.name.equals(cmdArgs)) {
                         send_buf = ("declined" + challengee).getBytes();
                         i.message(socket, send_buf);
                         break;
@@ -737,9 +670,7 @@ public class UDPServer {
             return;
         }
 
-        if (msg.startsWith("ypm")) {
-
-            value = msg.substring(3);
+        if (command.equals("ypm")) {
 
             String challengee = "";
 
@@ -752,12 +683,12 @@ public class UDPServer {
             }
 
             if (!challengee.equals("")) {
-                log(challengee + " accepted the challenge from " + value);
+                log(challengee + " accepted the challenge from " + cmdArgs);
 
                 // message the challenger
                 for (Player i : players) {
 
-                    if (i.name.equals(value)) {
+                    if (i.name.equals(cmdArgs)) {
                         sendMessage("g2pm" + avail_port + "A", i.address, i.port);
                         break;
                     }
@@ -766,8 +697,7 @@ public class UDPServer {
                 // message the challengee
                 sendMessage("g2pm" + avail_port + "B", address, port);
 
-                value = msg.substring(3);
-                Game new_game = new Game(this, value + "' Practice Game", avail_port++, "Practice");
+                Game new_game = new Game(this, cmdArgs + "'s Practice Game", avail_port++, "Practice");
                 games.add(new_game);
                 Thread new_practice_game = new Thread(new_game);
                 new_practice_game.start();
@@ -810,25 +740,23 @@ public class UDPServer {
          */
 
         // getting the date from the server
-        if (msg.equals("date")) {
-
+        if (command.equals("date")) {
             sendMessage(LocalDate.now().toString(), address, port);
-
             return;
         }
 
         // discord link
-        if (msg.startsWith("disc")) {
+        if (command.equals("disc")) {
             sendMessage("disc" + discordLink, address, port);
             return;
         }
 
         // Ping
-        if (msg.startsWith("ping")) {
-            value = msg.substring(4);
-            log(value + " has pinged the server..");
+        if (command.equals("ping")) {
+
+            log(cmdArgs + " has pinged the server..");
             sendMessage("pong", address, port);
-            handlePlayers(value, address, port);
+            handlePlayers(cmdArgs, address, port);
             return;
         }
 
@@ -856,7 +784,7 @@ public class UDPServer {
          */
 
         // Player trying to find a game,
-        if (msg.startsWith("fpvp")) {
+        if (command.equals("fpvp")) {
 
             boolean gameFound = false;
 
@@ -877,61 +805,61 @@ public class UDPServer {
         }
 
         // Player left to pvp
-        if (msg.startsWith("f2pvp")) {
+        if (command.equals("f2pvp")) {
 
-            passChatToAllPlayers("msg*" + msg.substring(5) + "* has left for some PvP!", null);
-            print(msg.substring(5) + "* has left for some PvP!");
+            passChatToAllPlayers("msg*" + cmdArgs + "* has left for some PvP!", null);
+            print(cmdArgs + "* has left for some PvP!");
             // removePlayer(address,port);
 
             return;
         }
 
         // Player left to train
-        if (msg.startsWith("ftrain")) {
+        if (command.equals("ftrain")) {
 
-            passChatToAllPlayers("msg*" + msg.substring(6) + "* has left to train!", null);
-            print(msg.substring(6) + " has left to train!");
+            passChatToAllPlayers("msg*" + cmdArgs + "* has left to train!", null);
+            print(cmdArgs + " has left to train!");
             // removePlayer(address,port);
 
             return;
         }
 
         // Player left to tutorial
-        if (msg.startsWith("ftutorial")) {
+        if (command.equals("ftutorial")) {
 
-            passChatToAllPlayers("msg*" + msg.substring(9) + "* has left to do the tutorial!", null);
-            print(msg.substring(9) + " has left do tutorial!");
+            passChatToAllPlayers("msg*" + cmdArgs + "* has left to do the tutorial!", null);
+            print(cmdArgs + " has left do tutorial!");
             // removePlayer(address,port);
 
             return;
         }
 
         // Player left to challenge mode
-        if (msg.startsWith("fchalmode")) {
+        if (command.equals("fchalmode")) {
 
-            passChatToAllPlayers("msg*" + msg.substring(9) + "* has left to face a challenge!", null);
-            print(msg.substring(9) + " has left do challenge mode!");
+            passChatToAllPlayers("msg*" + cmdArgs + "* has left to face a challenge!", null);
+            print(cmdArgs + " has left do challenge mode!");
             // removePlayer(address,port);
 
             return;
         }
 
-        if (msg.startsWith("fstory")) {
+        if (command.equals("fstory")) {
 
-            passChatToAllPlayers("msg*" + msg.substring(6) + "* has left do to story mode!", null);
-            print(msg.substring(6) + " has left to do story mode.");
+            passChatToAllPlayers("msg*" + cmdArgs + "* has left do to story mode!", null);
+            print(cmdArgs + " has left to do story mode.");
 
             return;
         }
 
         // New User
         if (command.equals("nuser")) {
-            value = msg.substring(5);
-            String name = value.substring(0, value.indexOf("!"));
-            String password = value.substring(value.indexOf("!") + 1, value.indexOf("#"));
-            String email = value.substring(value.indexOf("#") + 1);
 
-            print("recieved nuser for :" + value);
+            String name = cmdArgs.substring(0, cmdArgs.indexOf("!"));
+            String password = cmdArgs.substring(cmdArgs.indexOf("!") + 1, cmdArgs.indexOf("#"));
+            String email = cmdArgs.substring(cmdArgs.indexOf("#") + 1);
+
+            print("recieved nuser for :" + cmdArgs);
             if (registerAccount(name, password, email)) {
 
                 sendMessage("user created", address, port);
@@ -948,59 +876,60 @@ public class UDPServer {
 
         // New Character
         // if (msg.startsWith("nchar")) {
-        //     value = msg.substring(5);
-        //     String account = value.substring(0, value.indexOf("."));
-        //     String character = value.substring(value.indexOf(".") + 1);
+        // value = msg.substring(5);
+        // String account = value.substring(0, value.indexOf("."));
+        // String character = value.substring(value.indexOf(".") + 1);
 
-        //     // print("New Character ["+character+"] in Account ["+account+"]");
-        //     // print("Value: "+value);
-        //     // print("Account: "+account);
-        //     // print("Character: "+character);
+        // // print("New Character ["+character+"] in Account ["+account+"]");
+        // // print("Value: "+value);
+        // // print("Account: "+account);
+        // // print("Character: "+character);
 
-        //     // Add Dir for new character
-        //     new File("Users/" + account + "/Character/" + character).mkdir();
+        // // Add Dir for new character
+        // new File("Users/" + account + "/Character/" + character).mkdir();
 
-        //     try {
-        //         // Write Charcter to player's list of characters
-        //         FileWriter fr = new FileWriter(new File("Users/" + account + "/Character/list.con"), true);
-        //         fr.write(character + "\n");
-        //         fr.close();
+        // try {
+        // // Write Charcter to player's list of characters
+        // FileWriter fr = new FileWriter(new File("Users/" + account +
+        // "/Character/list.con"), true);
+        // fr.write(character + "\n");
+        // fr.close();
 
-        //         // Write character to the name taken list
-        //         fr = new FileWriter(new File("Users/allcharacters.con"), true);
-        //         fr.write(character + "\n");
-        //         fr.close();
+        // // Write character to the name taken list
+        // fr = new FileWriter(new File("Users/allcharacters.con"), true);
+        // fr.write(character + "\n");
+        // fr.close();
 
-        //         sendMessage("char created", address, port);
+        // sendMessage("char created", address, port);
 
-        //         print("** " + account + " has registered a new character: " + character + " **");
-        //     } catch (IOException e) {
-        //         e.printStackTrace();
-        //     }
+        // print("** " + account + " has registered a new character: " + character + "
+        // **");
+        // } catch (IOException e) {
+        // e.printStackTrace();
+        // }
 
-        //     return;
+        // return;
         // }
 
         // File Transfer {Receiving a file}
-        if (msg.startsWith("frecv")) {
-            value = msg.substring(5);
-            sendMessage("prt" + avail_port, address, port);
+        // if (msg.startsWith("frecv")) {
+        // value = msg.substring(5);
+        // sendMessage("prt" + avail_port, address, port);
 
-            log(address + " is saving a file! [" + value + "]");
-            Thread frecv = new Thread(new FileReciever(avail_port++, value));
-            frecv.start();
+        // log(address + " is saving a file! [" + value + "]");
+        // Thread frecv = new Thread(new FileReciever(avail_port++, value));
+        // frecv.start();
 
-            return;
-        }
+        // return;
+        // }
 
         // File Transfer {Sending a file}
-        if (msg.startsWith("ftran")) {
-            value = msg.substring(5);
+        if (command.equals("ftran")) {
 
             sendMessage("prt" + avail_port, address, port);
 
-            log(address + " requested a file! [" + value + "]");
-            Thread ftran = new Thread(new FileSender(avail_port++, value));
+            log(address + " requested a file! [" + cmdArgs + "]");
+            Thread ftran = new Thread(new FileSender(avail_port++, cmdArgs));
             ftran.start();
             log("file sending thread started.");
             return;
@@ -1014,21 +943,20 @@ public class UDPServer {
 
         // Check if Character Exist
         if (command.equals("charexist")) {
-           sendMessage(checkIfCharacterExist(cmdArgs), address, port);
+            sendMessage(checkIfCharacterExist(cmdArgs), address, port);
             return;
         }
 
-        //Create new character
-        if(command.equals("addnewcharacter")){
+        // Create new character
+        if (command.equals("addnewcharacter")) {
             sendMessage(createNewCharacter(cmdArgs), address, port);
             return;
         }
 
         // check a code
-        if (msg.startsWith("checkcode")) {
+        if (command.equals("checkcode")) {
 
-            value = msg.substring(9);
-            log("Code Recieved: " + value);
+            log("Code Recieved: " + cmdArgs);
             try {
 
                 File temp_file = new File("Codes.con");
@@ -1057,8 +985,8 @@ public class UDPServer {
                     // check if code exist
 
                     for (Code i : codes) {
-                        log("comparing: " + i.code + "|" + value);
-                        if (i.code.equals(value)) {
+                        log("comparing: " + i.code + "|" + cmdArgs);
+                        if (i.code.equals(cmdArgs)) {
 
                             codeFound = true;
 
@@ -1203,8 +1131,9 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1);
 
             ResultSet result = DB.createStatement()
-                    .executeQuery("select tokens from characters where account='" + getIdFromToken(account) + "' and name='"
-                            + character + "'");
+                    .executeQuery(
+                            "select tokens from characters where account='" + getIdFromToken(account) + "' and name='"
+                                    + character + "'");
 
             if (result.next()) {
 
@@ -1233,8 +1162,9 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1);
 
             ResultSet result = DB.createStatement()
-                    .executeQuery("select quest , questcounter from characters where account='" + getIdFromToken(account)
-                            + "' and name='" + character + "'");
+                    .executeQuery(
+                            "select quest , questcounter from characters where account='" + getIdFromToken(account)
+                                    + "' and name='" + character + "'");
 
             if (result.next()) {
 
@@ -1263,8 +1193,9 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1);
 
             ResultSet result = DB.createStatement()
-                    .executeQuery("select badges from characters where account='" + getIdFromToken(account) + "' and name='"
-                            + character + "'");
+                    .executeQuery(
+                            "select badges from characters where account='" + getIdFromToken(account) + "' and name='"
+                                    + character + "'");
 
             if (result.next()) {
 
@@ -1292,11 +1223,12 @@ public class UDPServer {
             String account = token.substring(0, token.indexOf(" "));
             String character = token.substring(token.indexOf(" ") + 1);
 
-            log("getting stat for "+character);
+            log("getting stat for " + character);
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select level, health, strength, defense, critical, experience, skillpoints, skillpointsused from characters where account='"+ getIdFromToken(account) + "' and name='" + character + "'");
+                            "select level, health, strength, defense, critical, experience, skillpoints, skillpointsused from characters where account='"
+                                    + getIdFromToken(account) + "' and name='" + character + "'");
 
             if (result.next()) {
 
@@ -1368,8 +1300,9 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1);
 
             ResultSet result = DB.createStatement()
-                    .executeQuery("select story from characters where account='" + getIdFromToken(account) + "' and name='"
-                            + character + "'");
+                    .executeQuery(
+                            "select story from characters where account='" + getIdFromToken(account) + "' and name='"
+                                    + character + "'");
 
             if (result.next()) {
 
@@ -1436,7 +1369,8 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select achievements from characters where account='" + getIdFromToken(account) + "' and name='"
+                            "select achievements from characters where account='" + getIdFromToken(account)
+                                    + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1509,7 +1443,8 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventoryhair from characters where account='" + getIdFromToken(account) + "' and name='"
+                            "select inventoryhair from characters where account='" + getIdFromToken(account)
+                                    + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1596,7 +1531,8 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventoryface from characters where account='" + getIdFromToken(account) + "' and name='"
+                            "select inventoryface from characters where account='" + getIdFromToken(account)
+                                    + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1687,7 +1623,8 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventoryshirt from characters where account='" + getIdFromToken(account) + "' and name='"
+                            "select inventoryshirt from characters where account='" + getIdFromToken(account)
+                                    + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1777,7 +1714,8 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventorypants from characters where account='" + getIdFromToken(account) + "' and name='"
+                            "select inventorypants from characters where account='" + getIdFromToken(account)
+                                    + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -1867,7 +1805,8 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select inventorysets from characters where account='" + getIdFromToken(account) + "' and name='"
+                            "select inventorysets from characters where account='" + getIdFromToken(account)
+                                    + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -2043,7 +1982,8 @@ public class UDPServer {
 
             ResultSet result = DB.createStatement()
                     .executeQuery(
-                            "select redeemedcodes from characters where account='" + getIdFromToken(account) + "' and name='"
+                            "select redeemedcodes from characters where account='" + getIdFromToken(account)
+                                    + "' and name='"
                                     + character + "'");
 
             if (result.next()) {
@@ -2320,7 +2260,8 @@ public class UDPServer {
 
             int result = DB.createStatement()
                     .executeUpdate("update characters set wins='" + wins + "', losses='" + losses + "', rankpoints='"
-                            + rankpoints + "' where account='" + getIdFromToken(account) + "' and name='" + character + "'");
+                            + rankpoints + "' where account='" + getIdFromToken(account) + "' and name='" + character
+                            + "'");
 
             log("Saved RP for " + character + " result is " + result);
 
@@ -2761,15 +2702,19 @@ public class UDPServer {
 
             } while (end_location != -1);
 
-            if(data.isEmpty()){
+            if (data.isEmpty()) {
                 throw new Exception("Stone list is empty");
             }
 
-            int result = DB.createStatement().executeUpdate("update characters set firestones='"+data.get(0)+"', icestones='"+data.get(1)+"', spiritstones='"+data.get(2)+"', lightningstones='"+data.get(3)+"', bloodstones='"+data.get(4)+", darkstones='"+data.get(5)+"' where account='"+getIdFromToken(account)+"' and name='"+character+"'");
+            int result = DB.createStatement()
+                    .executeUpdate("update characters set firestones='" + data.get(0) + "', icestones='" + data.get(1)
+                            + "', spiritstones='" + data.get(2) + "', lightningstones='" + data.get(3)
+                            + "', bloodstones='" + data.get(4) + ", darkstones='" + data.get(5) + "' where account='"
+                            + getIdFromToken(account) + "' and name='" + character + "'");
 
-            if(result == 1){
+            if (result == 1) {
                 return "success";
-            }else{
+            } else {
                 return "failed";
             }
 
@@ -2787,11 +2732,12 @@ public class UDPServer {
             String character = token.substring(token.indexOf(" ") + 1, token.indexOf(":"));
             String list = token.substring(token.indexOf(":") + 1);
 
-            int result = DB.createStatement().executeUpdate("update characters set story='"+list+"' where account='"+getIdFromToken(account)+"' and name='"+character+"'");
+            int result = DB.createStatement().executeUpdate("update characters set story='" + list + "' where account='"
+                    + getIdFromToken(account) + "' and name='" + character + "'");
 
-            if(result == 1){
+            if (result == 1) {
                 return "success";
-            }else{
+            } else {
                 return "failed";
             }
 
@@ -2802,21 +2748,22 @@ public class UDPServer {
 
     }
 
-    private String checkIfAccountExist(String account){
+    private String checkIfAccountExist(String account) {
 
         try {
 
-            ResultSet result = DB.createStatement().executeQuery("select username from accounts where username='"+account+"'");
+            ResultSet result = DB.createStatement()
+                    .executeQuery("select username from accounts where username='" + account + "'");
 
-            if(result.next()){
+            if (result.next()) {
 
-                if(result.getString("username").equals(account)){
+                if (result.getString("username").equals(account)) {
                     return "true";
-                }else{
+                } else {
                     return "false";
                 }
 
-            }else{
+            } else {
                 return "false";
             }
 
@@ -2827,21 +2774,22 @@ public class UDPServer {
         }
     }
 
-    private String checkIfCharacterExist(String character){
+    private String checkIfCharacterExist(String character) {
 
         try {
 
-            ResultSet result = DB.createStatement().executeQuery("select name from characters where name='"+character+"'");
+            ResultSet result = DB.createStatement()
+                    .executeQuery("select name from characters where name='" + character + "'");
 
-            if(result.next()){
+            if (result.next()) {
 
-                if(result.getString("name").equals(character)){
+                if (result.getString("name").equals(character)) {
                     return "true";
-                }else{
+                } else {
                     return "false";
                 }
 
-            }else{
+            } else {
                 return "false";
             }
 
@@ -2858,15 +2806,16 @@ public class UDPServer {
             String account = token.substring(0, token.indexOf(" "));
             String character = token.substring(token.indexOf(" ") + 1);
 
-            int result = DB.createStatement().executeUpdate("insert into characters(name,account) values('"+character+"','"+getIdFromToken(account)+"')");
+            int result = DB.createStatement().executeUpdate("insert into characters(name,account) values('" + character
+                    + "','" + getIdFromToken(account) + "')");
 
-            if(result == 1){
+            if (result == 1) {
                 return "success";
-            }else{
+            } else {
                 return "failed";
             }
 
-        }catch(Exception e){
+        } catch (Exception e) {
             e.printStackTrace();
             return "failed";
         }
@@ -3038,32 +2987,32 @@ public class UDPServer {
         trayIcon.displayMessage("Geo Fighter Server", message$, MessageType.INFO);
     }
 
-    private String createHashedPassword(String password){
+    private String createHashedPassword(String password) {
 
         String hashed = BCrypt.hashpw(password, BCrypt.gensalt(SALT_ROUNDS));
 
         return hashed;
     }
 
-    private Boolean checkHashedPassword(String plainPassword, String hashedPassword){
+    private Boolean checkHashedPassword(String plainPassword, String hashedPassword) {
 
-        if(BCrypt.checkpw(plainPassword, hashedPassword)){
+        if (BCrypt.checkpw(plainPassword, hashedPassword)) {
             return true;
-        }else{
+        } else {
             return false;
         }
     }
 
-    private String createPlayerToken(String id){
+    private String createPlayerToken(String id) {
 
         try {
             return Jwts.builder()
-            .claim("id",id)
-            .setIssuedAt(Date.from(Instant.now()))
-            .setExpiration(Date.from(Instant.now().plus(1, ChronoUnit.DAYS)))
-            .signWith(SECRET_KEY)
-            .compact();
-        }catch(Exception e){
+                    .claim("id", id)
+                    .setIssuedAt(Date.from(Instant.now()))
+                    .setExpiration(Date.from(Instant.now().plus(1, ChronoUnit.DAYS)))
+                    .signWith(SECRET_KEY)
+                    .compact();
+        } catch (Exception e) {
             e.printStackTrace();
             return "";
         }
@@ -3075,12 +3024,12 @@ public class UDPServer {
         try {
 
             Jws<Claims> jwt = Jwts.parserBuilder()
-                .setSigningKey(SECRET_KEY)
-                .build()
-                .parseClaimsJws(jwtToken);
+                    .setSigningKey(SECRET_KEY)
+                    .build()
+                    .parseClaimsJws(jwtToken);
 
-        String id = (String) jwt.getBody().get("id");
-        return id;
+            String id = (String) jwt.getBody().get("id");
+            return id;
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -3092,25 +3041,25 @@ public class UDPServer {
 
     // public String encode64(String str) {
 
-    //     // log("Starting Encoding on " + str);
-    //     for (int i = 0; i < 3; i++) {
-    //         // log("Encoding: " + str);
-    //         str = Base64.getEncoder().encodeToString(str.getBytes());
-    //     }
+    // // log("Starting Encoding on " + str);
+    // for (int i = 0; i < 3; i++) {
+    // // log("Encoding: " + str);
+    // str = Base64.getEncoder().encodeToString(str.getBytes());
+    // }
 
-    //     // log("Final encode: " + str);
-    //     return str;
+    // // log("Final encode: " + str);
+    // return str;
     // }
 
     // public String decode64(String str) {
 
-    //     // log("Starting Decoding on " + str);
-    //     for (int i = 0; i < 3; i++) {
-    //         // log("Decoding: " + str);
-    //         str = new String(Base64.getDecoder().decode(str));
-    //     }
+    // // log("Starting Decoding on " + str);
+    // for (int i = 0; i < 3; i++) {
+    // // log("Decoding: " + str);
+    // str = new String(Base64.getDecoder().decode(str));
+    // }
 
-    //     // log("Final decode: " + str);
-    //     return str;
+    // // log("Final decode: " + str);
+    // return str;
     // }
 }
